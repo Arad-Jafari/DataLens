@@ -1,4 +1,3 @@
-
 import hashlib
 from datetime import date
 from html import escape
@@ -534,7 +533,7 @@ with search_tab:
         key="dl_exclude_missing",
         help=(
             "When enabled, remove rows containing a missing value "
-            "in any column from the displayed results and reports."
+            "in any column from Search Results and its chart only."
         ),
     )
 
@@ -790,83 +789,51 @@ with search_tab:
     # CREATE SEARCH RESULT DATAFRAME
     # --------------------------------------------------------
 
-    result_mask = pd.Series(True, index=df.index)
+    # Use positional indexes inside Search & Filter so duplicate source
+    # indexes cannot cause rows to be selected more than once.
+    search_source = df.reset_index(drop=True)
+    result_mask = pd.Series(True, index=search_source.index)
 
     if quick_search:
         if search_scope == "Selected column" and search_column is not None:
             search_columns = [search_column]
         else:
-            search_columns = list(df.columns)
+            search_columns = list(search_source.columns)
 
-        quick_mask = pd.Series(False, index=df.index)
-
+        quick_mask = pd.Series(False, index=search_source.index)
         for column in search_columns:
-            text = df[column].astype("string")
+            text = search_source[column].astype("string")
             quick_mask |= text.str.contains(
                 quick_search,
                 case=True,
                 regex=False,
                 na=False,
             )
-
         result_mask &= quick_mask
 
-    applied_conditions = st.session_state.get(
-        "dl_applied_conditions",
-        [],
-    )
-
+    applied_conditions = st.session_state.get("dl_applied_conditions", [])
     if applied_conditions:
         try:
-            # Apply advanced filters directly to the source mask.
-            for condition in applied_conditions:
-                pass
-
-            advanced_df = build_filtered_view(
-                df,
+            advanced_source = build_filtered_view(
+                search_source,
                 applied_conditions,
                 st.session_state.get("dl_applied_logic", "AND"),
             )
-
-            advanced_mask = pd.Series(False, index=df.index)
-            advanced_mask.iloc[
-                df.index.get_indexer_for(advanced_df.index)
-            ] = True
-
-            # The positional approach below also handles duplicate indexes.
-            # Recalculate by filtering positional row numbers.
-            positions = pd.Series(range(len(df)), index=range(len(df)))
-            position_frame = df.reset_index(drop=True)
-            advanced_position_df = build_filtered_view(
-                position_frame,
-                applied_conditions,
-                st.session_state.get("dl_applied_logic", "AND"),
+            advanced_positions = set(advanced_source.index)
+            advanced_mask = pd.Series(
+                search_source.index.isin(advanced_positions),
+                index=search_source.index,
             )
-            advanced_positions = advanced_position_df.index
-
-            positional_mask = pd.Series(
-                False,
-                index=range(len(df)),
-            )
-            positional_mask.loc[advanced_positions] = True
-
-            combined = result_mask.reset_index(drop=True) & positional_mask
-            filtered_df = df.iloc[combined.to_numpy()].copy()
-
+            result_mask &= advanced_mask
         except Exception as error:
             st.error(f"Could not calculate advanced filters: {error}")
-            filtered_df = df.loc[result_mask].copy()
-    else:
-        filtered_df = df.loc[result_mask].copy()
 
-    # Keep the searched result, including missing values, available first.
-    searched_df = filtered_df.copy()
+    searched_df = search_source.loc[result_mask].copy()
 
-    # Optional missing-value exclusion applies to results and downstream reports.
+    # Missing-value exclusion applies only to Search & Filter results.
+    search_result_df = searched_df.copy()
     if st.session_state.get("dl_exclude_missing", False):
-        filtered_df = filtered_df.dropna(axis=0, how="any").copy()
-
-    report_df = filtered_df.copy()
+        search_result_df = search_result_df.dropna(axis=0, how="any").copy()
 
     st.divider()
     st.subheader("Search Results")
@@ -874,7 +841,7 @@ with search_tab:
     m1, m2, m3 = st.columns(3)
     m1.metric("Original rows", f"{len(df):,}")
     m2.metric("Matching rows", f"{len(searched_df):,}")
-    m3.metric("Rows after missing-value exclusion", f"{len(report_df):,}")
+    m3.metric("Rows shown", f"{len(search_result_df):,}")
 
     visible_columns = st.multiselect(
         "Columns to display",
@@ -883,7 +850,7 @@ with search_tab:
         key="dl_visible_columns",
     )
 
-    display_df = report_df.loc[:, visible_columns]
+    display_df = search_result_df.loc[:, visible_columns]
 
     st.dataframe(
         display_df,
@@ -900,7 +867,8 @@ with search_tab:
     )
 
     st.caption(
-        "Charts in this tab use the search results after the missing-value option."
+        "The search results, missing-value option, and chart below do not change "
+        "the original dataset used by the other tabs."
     )
 
     # --------------------------------------------------------
@@ -910,7 +878,7 @@ with search_tab:
     st.divider()
     st.subheader("Visualize Search Results")
 
-    chart_df = report_df
+    chart_df = search_result_df
 
     if chart_df.empty:
         st.info("No matching rows are available to visualize.")
@@ -927,10 +895,7 @@ with search_tab:
             key="dl_search_chart_type",
         )
 
-        numeric_columns = list(
-            chart_df.select_dtypes(include="number").columns
-        )
-
+        numeric_columns = list(chart_df.select_dtypes(include="number").columns)
         categorical_columns = [
             col for col in chart_df.columns
             if not pd.api.types.is_numeric_dtype(chart_df[col])
@@ -944,13 +909,17 @@ with search_tab:
                     numeric_columns,
                     key="dl_search_hist_column",
                 )
-                fig = px.histogram(
-                    chart_df,
-                    x=column,
-                    template="plotly_dark",
-                    title=f"Distribution of {column} in search results",
-                )
-                st.plotly_chart(fig, use_container_width=True)
+                values = pd.to_numeric(chart_df[column], errors="coerce").dropna()
+                if not values.empty:
+                    fig = px.histogram(
+                        chart_df.assign(**{column: pd.to_numeric(chart_df[column], errors="coerce")}),
+                        x=column,
+                        template="plotly_dark",
+                        title=f"Distribution of {column} in search results",
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.info("The selected column has no numeric values to chart.")
             else:
                 st.info("No numeric columns are available for a histogram.")
 
@@ -995,13 +964,17 @@ with search_tab:
                     numeric_columns,
                     key="dl_search_box_column",
                 )
-                fig = px.box(
-                    chart_df,
-                    y=column,
-                    template="plotly_dark",
-                    title=f"Box plot of {column}",
-                )
-                st.plotly_chart(fig, use_container_width=True)
+                values = pd.to_numeric(chart_df[column], errors="coerce").dropna()
+                if not values.empty:
+                    fig = px.box(
+                        chart_df.assign(**{column: pd.to_numeric(chart_df[column], errors="coerce")}),
+                        y=column,
+                        template="plotly_dark",
+                        title=f"Box plot of {column}",
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.info("The selected column has no numeric values to chart.")
             else:
                 st.info("No numeric columns are available for a box plot.")
 
@@ -1021,6 +994,7 @@ with search_tab:
                         y_options,
                         key="dl_search_scatter_y",
                     )
+
                 color_col = None
                 if categorical_columns:
                     color_col = st.selectbox(
@@ -1031,45 +1005,56 @@ with search_tab:
                     if color_col == "None":
                         color_col = None
 
-                fig = px.scatter(
-                    chart_df,
-                    x=x,
-                    y=y,
-                    color=color_col,
-                    template="plotly_dark",
-                    title=f"{y} vs {x} in search results",
-                )
-                st.plotly_chart(fig, use_container_width=True)
+                plot_df = chart_df.copy()
+                plot_df[x] = pd.to_numeric(plot_df[x], errors="coerce")
+                plot_df[y] = pd.to_numeric(plot_df[y], errors="coerce")
+                plot_df = plot_df.dropna(subset=[x, y])
+                if not plot_df.empty:
+                    fig = px.scatter(
+                        plot_df,
+                        x=x,
+                        y=y,
+                        color=color_col,
+                        template="plotly_dark",
+                        title=f"{y} vs {x} in search results",
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.info("No complete X/Y pairs are available for this scatter plot.")
             else:
                 st.info("At least two numeric columns are required.")
 
         elif chart_type == "Correlation heatmap":
             if len(numeric_columns) >= 2:
-                corr = chart_df[numeric_columns].corr()
-                fig = px.imshow(
-                    corr,
-                    text_auto=".2f",
-                    zmin=-1,
-                    zmax=1,
-                    color_continuous_scale="RdBu",
-                    template="plotly_dark",
-                    title="Search-result correlation heatmap",
-                )
-                st.plotly_chart(fig, use_container_width=True)
+                numeric_data = chart_df[numeric_columns].apply(pd.to_numeric, errors="coerce")
+                corr = numeric_data.corr()
+                valid_columns = corr.columns[corr.notna().any()]
+                corr = corr.loc[valid_columns, valid_columns]
+                if corr.shape[0] >= 2:
+                    fig = px.imshow(
+                        corr,
+                        text_auto=".2f",
+                        zmin=-1,
+                        zmax=1,
+                        color_continuous_scale="RdBu",
+                        template="plotly_dark",
+                        title="Search-result correlation heatmap",
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.info("Not enough valid numeric correlations for a heatmap.")
             else:
                 st.info("At least two numeric columns are required.")
+
 
 
 # ============================================================
 # COMMON REPORT DATA
 # ============================================================
 
-# Reports intentionally use the current search result, not the original df.
-report_df = (
-    filtered_df.copy()
-    if "filtered_df" in locals()
-    else df.copy()
-)
+# All tabs outside Search & Filter always use the original dataset.
+# Search filters and missing-value exclusion never alter these reports.
+report_df = df.copy()
 
 row_count, column_count = report_df.shape
 missing_count = int(report_df.isna().sum().sum())
@@ -1106,12 +1091,15 @@ with quality_tab:
     st.markdown("#### Missing Values by Column")
 
     missing = report_df.isna().sum()
+    missing_percent = (
+        missing.astype(float).div(row_count).mul(100).round(2)
+        if row_count
+        else pd.Series(0.0, index=report_df.columns, dtype=float)
+    )
     missing_report = pd.DataFrame({
         "Column": missing.index.astype(str),
         "Missing Values": missing.values,
-        "Missing (%)": (
-            missing / row_count * 100 if row_count else 0
-        ).round(2),
+        "Missing (%)": missing_percent.values,
         "Non-Missing Values": report_df.notna().sum().values,
     })
 
@@ -1144,13 +1132,6 @@ with columns_tab:
         "Column": report_df.columns.astype(str),
         "Data Type": [str(dtype) for dtype in report_df.dtypes],
         "Total Rows": [len(report_df)] * len(report_df.columns),
-        "Non-Missing": report_df.notna().sum().values,
-        "Missing": report_df.isna().sum().values,
-        "Missing (%)": (
-            report_df.isna().sum() / len(report_df) * 100
-            if len(report_df)
-            else pd.Series(0, index=report_df.columns)
-        ).round(2).values,
         "Unique Values": report_df.nunique(dropna=True).values,
     })
 
@@ -1168,15 +1149,6 @@ with columns_tab:
         )
 
         series = report_df[selected_column]
-
-        a, b, c, d = st.columns(4)
-        a.metric("Non-missing", f"{series.notna().sum():,}")
-        b.metric("Missing", f"{series.isna().sum():,}")
-        c.metric(
-            "Missing %",
-            f"{series.isna().mean() * 100:.2f}%" if len(series) else "0.00%",
-        )
-        d.metric("Unique", f"{series.nunique(dropna=True):,}")
 
         common = (
             series.value_counts(dropna=False)
@@ -1196,35 +1168,12 @@ with columns_tab:
 with stats_tab:
     st.subheader("Descriptive Statistics")
     st.caption(
-        "Null counts are shown for every column. Statistics are calculated "
-        "from the current search result."
+        "Descriptive statistics use the original dataset. Missing-value "
+        "details are consolidated in the Data Quality tab."
     )
 
-    stats_table = pd.DataFrame({
-        "Data Type": report_df.dtypes.astype(str),
-        "Total Rows": len(report_df),
-        "Non-Null": report_df.notna().sum(),
-        "Null Values": report_df.isna().sum(),
-        "Null (%)": (
-            report_df.isna().sum() / len(report_df) * 100
-            if len(report_df)
-            else 0
-        ).round(2),
-        "Unique Values": report_df.nunique(dropna=True),
-    })
-
-    st.markdown("#### Null Values and Column Statistics")
-    st.dataframe(
-        stats_table,
-        use_container_width=True,
-    )
-
-    st.download_button(
-        "Download column statistics",
-        data=stats_table.reset_index(names="Column").to_csv(index=False).encode("utf-8"),
-        file_name="datalens_column_statistics.csv",
-        mime="text/csv",
-        key="dl_download_statistics",
+    st.markdown(
+        "Missing-value counts and column metadata are shown in their dedicated tabs."
     )
 
     st.divider()
@@ -1232,13 +1181,6 @@ with stats_tab:
 
     if not numeric_df.empty:
         numeric_stats = numeric_df.describe().T
-        numeric_stats["Null Values"] = numeric_df.isna().sum()
-        numeric_stats["Null (%)"] = (
-            numeric_df.isna().sum() / len(numeric_df) * 100
-            if len(numeric_df)
-            else 0
-        ).round(2)
-
         st.dataframe(numeric_stats, use_container_width=True)
     else:
         st.info("No numeric columns are available.")
@@ -1252,13 +1194,6 @@ with stats_tab:
 
     if not categorical_df.empty:
         categorical_stats = categorical_df.describe().T
-        categorical_stats["Null Values"] = categorical_df.isna().sum()
-        categorical_stats["Null (%)"] = (
-            categorical_df.isna().sum() / len(categorical_df) * 100
-            if len(categorical_df)
-            else 0
-        ).round(2)
-
         st.dataframe(categorical_stats, use_container_width=True)
     else:
         st.info("No categorical columns are available.")
@@ -1271,37 +1206,14 @@ with stats_tab:
 with reports_tab:
     st.subheader("Visual Reports")
     st.caption(
-        "All charts below use the current search results and missing-value setting."
+        "These charts use the original dataset. Missing-value details are "
+        "available in the Data Quality tab."
     )
 
     if report_df.empty:
         st.info("No rows are available for visualization.")
     else:
-        # Missing values
-        st.markdown("#### 1. Missing Values by Column")
 
-        missing_chart = (
-            report_df.isna()
-            .sum()
-            .rename("Missing Values")
-            .reset_index()
-        )
-        missing_chart.columns = ["Column", "Missing Values"]
-        missing_chart = missing_chart[missing_chart["Missing Values"] > 0]
-
-        if not missing_chart.empty:
-            fig = px.bar(
-                missing_chart,
-                x="Column",
-                y="Missing Values",
-                template="plotly_dark",
-                title="Missing values in current results",
-            )
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.success("No missing values in the current results.")
-
-        st.divider()
 
         # Histogram
         st.markdown("#### 2. Numeric Distribution")
