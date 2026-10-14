@@ -216,17 +216,13 @@ st.markdown(
 # ============================================================
 # FILE UPLOADER
 # ============================================================
-st.markdown(
-    '<p> </p>',
-    unsafe_allow_html=True,
-)
+
 st.markdown(
     '<p class="section-label">01 — IMPORT DATA</p>',
     unsafe_allow_html=True,
 )
 
 st.subheader("Start with a file")
-
 st.write("Choose a CSV, Excel workbook, or text file.")
 
 uploaded_file = st.file_uploader(
@@ -246,6 +242,8 @@ uploaded_file = st.file_uploader(
 
 if uploaded_file is not None:
     upload_bytes = uploaded_file.getvalue()
+
+    # A deterministic identifier for this upload.
     upload_id = (
         uploaded_file.name,
         len(upload_bytes),
@@ -285,7 +283,9 @@ if uploaded_file is not None:
 
             st.session_state["processed_upload_id"] = upload_id
 
-            # Refresh the app so the sidebar reflects the new state.
+            # Invalidate an old ML split when the dataset changes.
+            st.session_state.pop("ml_preparation_result", None)
+
             st.rerun()
 
         except Exception as e:
@@ -319,11 +319,22 @@ with st.sidebar:
         unsafe_allow_html=True,
     )
 
-    st.page_link("app.py", label="Home", icon="🏠")
+    st.page_link(
+        "app.py",
+        label="Home",
+        icon="🏠",
+    )
+
     st.page_link(
         "pages/1_Data_Explorer.py",
         label="Data Explorer",
         icon="📊",
+    )
+
+    st.page_link(
+        "pages/2_Data_Preparation.py",
+        label="ML Preparation",
+        icon="🤖",
     )
 
     st.divider()
@@ -442,7 +453,7 @@ if df is not None:
     )
 
     st.subheader(
-        st.session_state.get("dataset_name", "Current dataset")
+        st.session_state.get("dataset_name") or "Current dataset"
     )
 
     row_count, column_count = df.shape
