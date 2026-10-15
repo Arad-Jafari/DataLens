@@ -1,15 +1,4 @@
-import pandas as pd
-from sklearn.model_selection import train_test_split
-
-def machine_learning_prepration(df,y_column):
-    X = df.drop(f'{y_column}', axis=1) #Data frame
-    y = df[f'{y_column}'] #Series
-def training_test(X,y):
-    train_X,test_X,train_y,test_y = train_test_split(X,y,test_size=0.3,random_state=7)
-    return train_X,test_X,train_y,test_y
-
-
-
+from __future__ import annotations
 
 import math
 
@@ -39,7 +28,7 @@ def validate_dataset(df: pd.DataFrame) -> list[str]:
     return errors
 
 
-def prepare_features_target(df, target_column):
+def prepare_features_target(df: pd.DataFrame, target_column):
     """Separate features X and target y."""
     errors = validate_dataset(df)
 
@@ -92,7 +81,6 @@ def split_dataset(
 
     warnings = []
 
-    # Classification detection is a heuristic.
     if task_type == "Classification":
         is_classification = True
     elif task_type == "Regression":
@@ -100,8 +88,7 @@ def split_dataset(
     else:
         is_classification = (
             not pd.api.types.is_numeric_dtype(y)
-            or y.nunique()
-            <= min(20, max(2, int(len(y) * 0.05)))
+            or y.nunique() <= min(20, max(2, int(len(y) * 0.05)))
         )
 
     stratify = None

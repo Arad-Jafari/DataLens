@@ -1,16 +1,29 @@
-
-import math
-
 import pandas as pd
 import streamlit as st
 
-from sklearn.model_selection import train_test_split
+from modules.data_prepration import (
+    prepare_features_target,
+    split_dataset,
+    validate_dataset,
+)
+from modules.data_utils import get_dataset_summary
+from modules.ui import (
+    current_dataset,
+    ensure_app_session,
+    inject_base_css,
+    render_sidebar,
+)
 
 st.set_page_config(
     page_title="DataLens | ML Preparation",
     page_icon="🤖",
     layout="wide",
+    initial_sidebar_state="expanded",
 )
+
+ensure_app_session()
+inject_base_css()
+render_sidebar()
 
 st.title("ML Preparation")
 st.caption(
@@ -18,12 +31,9 @@ st.caption(
     "and prepare data for machine learning."
 )
 
-# ------------------------------------------------------------
-# LOAD THE DATASET
-# ------------------------------------------------------------
-
-df = st.session_state.get("working_df")
+df = current_dataset()
 dataset_name = st.session_state.get("dataset_name")
+dataset_id = st.session_state.get("processed_upload_id")
 
 if df is None or not isinstance(df, pd.DataFrame):
     st.warning(
@@ -33,44 +43,22 @@ if df is None or not isinstance(df, pd.DataFrame):
     st.stop()
 
 df = df.copy()
-
 st.caption(f"Dataset: {dataset_name or 'Current dataset'}")
 
-# ------------------------------------------------------------
-# VALIDATE THE DATASET
-# ------------------------------------------------------------
-
-errors = []
-
-if df.empty:
-    errors.append("The dataset is empty.")
-
-if not df.columns.is_unique:
-    errors.append("Column names must be unique.")
-
-if len(df) < 2:
-    errors.append("At least two rows are required.")
-
+errors = validate_dataset(df)
 if errors:
     for error in errors:
         st.error(error)
     st.stop()
 
-# ------------------------------------------------------------
-# DATASET OVERVIEW
-# ------------------------------------------------------------
-
+summary = get_dataset_summary(df)
 c1, c2, c3 = st.columns(3)
-c1.metric("Rows", f"{len(df):,}")
-c2.metric("Features available", f"{len(df.columns):,}")
-c3.metric("Missing cells", f"{int(df.isna().sum().sum()):,}")
+c1.metric("Rows", f"{summary['row_count']:,}")
+c2.metric("Features available", f"{summary['column_count']:,}")
+c3.metric("Missing cells", f"{summary['missing_count']:,}")
 
 st.subheader("Dataset preview")
 st.dataframe(df.head(10), use_container_width=True)
-
-# ------------------------------------------------------------
-# SELECT THE TARGET
-# ------------------------------------------------------------
 
 st.subheader("1. Select your target")
 
@@ -85,22 +73,10 @@ if target_column is None:
     st.info("Choose a target column to continue.")
     st.stop()
 
-y = df[target_column].copy()
-X = df.drop(columns=[target_column]).copy()
-
-if X.shape[1] == 0:
-    st.error("You need at least one feature besides the target.")
-    st.stop()
-
-if y.isna().any():
-    st.error(
-        f"The target column has {int(y.isna().sum())} missing values. "
-        "Clean these values before splitting."
-    )
-    st.stop()
-
-if y.nunique() < 2:
-    st.error("The target must contain at least two distinct values.")
+try:
+    X, y = prepare_features_target(df, target_column)
+except ValueError as exc:
+    st.error(str(exc))
     st.stop()
 
 st.write(f"**Target:** `{target_column}`")
@@ -113,10 +89,6 @@ with st.expander("Preview features and target"):
     right.write("Target (y)")
     right.dataframe(y.head(), use_container_width=True)
 
-# ------------------------------------------------------------
-# CONFIGURE THE TRAIN/TEST SPLIT
-# ------------------------------------------------------------
-
 st.subheader("2. Configure the split")
 
 with st.form("split_configuration"):
@@ -127,12 +99,10 @@ with st.form("split_configuration"):
         value=20,
         step=5,
     )
-
     task_type = st.selectbox(
         "Problem type",
         ["Auto-detect", "Classification", "Regression"],
     )
-
     random_state = st.number_input(
         "Random seed",
         min_value=0,
@@ -140,67 +110,27 @@ with st.form("split_configuration"):
         value=7,
         step=1,
     )
-
     stratify_classes = st.checkbox(
         "Use stratified splitting for classification",
         value=True,
     )
-
     submitted = st.form_submit_button(
         "Create train/test split",
         type="primary",
     )
 
-# ------------------------------------------------------------
-# SPLIT THE DATA
-# ------------------------------------------------------------
-
 if submitted:
-    is_classification = (
-        task_type == "Classification"
-        or (
-            task_type == "Auto-detect"
-            and (
-                not pd.api.types.is_numeric_dtype(y)
-                or y.nunique()
-                <= min(20, max(2, int(len(y) * 0.05)))
-            )
-        )
-    )
-
-    stratify = None
-    messages = []
-
-    if is_classification and stratify_classes:
-        counts = y.value_counts()
-        n_classes = len(counts)
-        n_test = math.ceil(len(y) * test_size / 100)
-        n_train = len(y) - n_test
-
-        can_stratify = (
-            counts.min() >= 2
-            and n_test >= n_classes
-            and n_train >= n_classes
-        )
-
-        if can_stratify:
-            stratify = y
-        else:
-            messages.append(
-                "Stratification is not possible with these class counts "
-                "and split settings. A regular random split will be used."
-            )
-
     try:
-        X_train, X_test, y_train, y_test = train_test_split(
+        X_train, X_test, y_train, y_test, messages = split_dataset(
             X,
             y,
             test_size=test_size / 100,
             random_state=int(random_state),
-            stratify=stratify,
+            task_type=task_type,
+            stratify_classification=stratify_classes,
         )
-
         st.session_state["ml_preparation_result"] = {
+            "dataset_id": dataset_id,
             "dataset_name": dataset_name,
             "target_column": target_column,
             "task_type": task_type,
@@ -211,25 +141,19 @@ if submitted:
             "y_train": y_train,
             "y_test": y_test,
         }
-
         st.success("Train/test split created successfully.")
-
         for message in messages:
             st.warning(message)
-
     except ValueError as exc:
         st.error(f"Unable to split the dataset: {exc}")
-
-# ------------------------------------------------------------
-# DISPLAY THE RESULT
-# ------------------------------------------------------------
 
 result = st.session_state.get("ml_preparation_result")
 
 if (
     result is not None
-    and result["dataset_name"] == dataset_name
-    and result["target_column"] == target_column
+    and result.get("dataset_id") == dataset_id
+    and result.get("dataset_name") == dataset_name
+    and result.get("target_column") == target_column
 ):
     st.subheader("3. Split results")
 
@@ -240,35 +164,28 @@ if (
 
     with st.expander("Preview training data"):
         st.dataframe(
-            result["X_train"].assign(
-                **{target_column: result["y_train"]}
-            ),
+            result["X_train"].assign(**{target_column: result["y_train"]}),
             use_container_width=True,
         )
 
     with st.expander("Preview testing data"):
         st.dataframe(
-            result["X_test"].assign(
-                **{target_column: result["y_test"]}
-            ),
+            result["X_test"].assign(**{target_column: result["y_test"]}),
             use_container_width=True,
         )
 
     train_df = result["X_train"].copy()
     train_df[target_column] = result["y_train"]
-
     test_df = result["X_test"].copy()
     test_df[target_column] = result["y_test"]
 
     d1, d2 = st.columns(2)
-
     d1.download_button(
         "Download training CSV",
         data=train_df.to_csv(index=False).encode("utf-8"),
         file_name="training_data.csv",
         mime="text/csv",
     )
-
     d2.download_button(
         "Download testing CSV",
         data=test_df.to_csv(index=False).encode("utf-8"),
