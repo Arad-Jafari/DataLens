@@ -34,7 +34,27 @@ class FileLoaderTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "bad.csv"
             path.write_bytes(b"\x00\x01\x02not,csv")
-            with self.assertRaises(ValueError):
+            with self.assertRaisesRegex(ValueError, "null bytes"):
+                load_file(path)
+
+    def test_csv_rejects_invalid_utf8(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "bad_encoding.csv"
+            path.write_bytes(b"name,value\nAda,\xff\n")
+            with self.assertRaisesRegex(ValueError, "Failed to load file"):
+                load_file(path)
+
+    def test_csv_rejects_rows_with_extra_fields(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "bad_rows.csv"
+            path.write_text("name,value\nAda,1,unexpected\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "Failed to load file"):
+                load_file(path)
+
+    def test_missing_file_has_a_clear_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "missing.csv"
+            with self.assertRaisesRegex(ValueError, "Failed to load file"):
                 load_file(path)
 
 

@@ -1,7 +1,7 @@
 import pandas as pd
 import streamlit as st
 
-from modules.data_prepration import (
+from modules.data_preparation import (
     prepare_features_target,
     split_dataset,
     validate_dataset,

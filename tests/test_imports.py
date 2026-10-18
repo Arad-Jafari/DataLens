@@ -10,6 +10,7 @@ class ImportTests(unittest.TestCase):
             "modules.filters",
             "modules.charts",
             "modules.file_loader",
+            "modules.data_preparation",
             "modules.data_prepration",
         ):
             importlib.import_module(name)

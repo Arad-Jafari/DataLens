@@ -3,7 +3,11 @@ import unittest
 import pandas as pd
 
 from modules.charts import build_correlation_heatmap, build_histogram
-from modules.data_prepration import prepare_features_target, validate_dataset
+from modules.data_preparation import (
+    prepare_features_target,
+    split_dataset,
+    validate_dataset,
+)
 from modules.data_utils import make_frequency_table
 
 
@@ -43,6 +47,24 @@ class MLValidationTests(unittest.TestCase):
         df = pd.DataFrame({"x": [1, 2, 3], "y": [1, None, 0]})
         with self.assertRaises(ValueError):
             prepare_features_target(df, "y")
+
+    def test_split_rejects_invalid_task_type(self):
+        X = pd.DataFrame({"x": [1, 2, 3, 4]})
+        y = pd.Series([0, 1, 0, 1])
+        with self.assertRaisesRegex(ValueError, "Task type"):
+            split_dataset(X, y, task_type="Classifcation")
+
+    def test_split_rejects_missing_target(self):
+        X = pd.DataFrame({"x": [1, 2, 3]})
+        y = pd.Series([0, None, 1])
+        with self.assertRaisesRegex(ValueError, "missing values"):
+            split_dataset(X, y)
+
+    def test_split_rejects_non_finite_test_size(self):
+        X = pd.DataFrame({"x": [1, 2, 3, 4]})
+        y = pd.Series([0, 1, 0, 1])
+        with self.assertRaisesRegex(ValueError, "finite number"):
+            split_dataset(X, y, test_size=float("nan"))
 
 
 class FrequencyConstantTests(unittest.TestCase):
