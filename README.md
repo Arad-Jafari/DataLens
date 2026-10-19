@@ -139,16 +139,6 @@ Changes are held in Streamlit session state while the session is active. Keep
 downloads of important results; the app does not provide persistent database
 storage or write changes back to the original uploaded file.
 
-## Run tests
-
-The test suite uses Python's built-in `unittest` framework:
-
-```bash
-python -m unittest discover -s tests -v
-```
-
-GitHub Actions runs the same test suite on pushes and pull requests.
-
 ## Project structure
 
 ```text
