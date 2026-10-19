@@ -66,9 +66,12 @@ if not isinstance(df, pd.DataFrame):
     st.stop()
 
 dataset_name = st.session_state.get("dataset_name") or "Current dataset"
-dataset_id = st.session_state.get("processed_upload_id")
-if dataset_id is None:
-    dataset_id = (dataset_name, df.shape)
+dataset_id = (
+    st.session_state.get("processed_upload_id"),
+    st.session_state.get("dataset_revision", 0),
+)
+if dataset_id[0] is None:
+    dataset_id = (dataset_name, df.shape, dataset_id[1])
 
 if df.empty:
     st.warning("Your dataset contains no rows.")
@@ -326,7 +329,6 @@ with search_tab:
     visible_columns = st.multiselect(
         "Columns to display",
         options=list(df.columns),
-        default=st.session_state.get("dl_visible_columns", list(df.columns)),
         key="dl_visible_columns",
     )
 
@@ -383,7 +385,11 @@ with search_tab:
                     f"Distribution of {column} in search results",
                 )
                 if fig is not None:
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(
+                        fig,
+                        use_container_width=True,
+                        key="dl_search_hist_chart",
+                    )
                 else:
                     st.info(message)
             else:
@@ -410,7 +416,11 @@ with search_tab:
                     limit=limit,
                 )
                 if fig is not None:
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(
+                        fig,
+                        use_container_width=True,
+                        key="dl_search_bar_chart",
+                    )
                 else:
                     st.info(message)
             else:
@@ -429,7 +439,11 @@ with search_tab:
                     f"Box plot of {column}",
                 )
                 if fig is not None:
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(
+                        fig,
+                        use_container_width=True,
+                        key="dl_search_box_chart",
+                    )
                 else:
                     st.info(message)
             else:
@@ -468,7 +482,11 @@ with search_tab:
                     color=color_col,
                 )
                 if fig is not None:
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(
+                        fig,
+                        use_container_width=True,
+                        key="dl_search_scatter_chart",
+                    )
                 else:
                     st.info(message)
             else:
@@ -481,7 +499,11 @@ with search_tab:
                 chart_numeric,
             )
             if fig is not None:
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(
+                    fig,
+                    use_container_width=True,
+                    key="dl_search_correlation_chart",
+                )
             else:
                 st.info(message)
 
@@ -621,14 +643,92 @@ with reports_tab:
                 nbins=20,
             )
             if fig is not None:
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(
+                    fig,
+                    use_container_width=True,
+                    key="dl_report_hist_chart",
+                )
             else:
                 st.info(message)
         else:
             st.info("No numeric columns are available.")
 
         st.divider()
-        st.markdown("#### 3. Categorical Value Frequencies")
+        st.markdown("#### 3. Numeric Box Plot")
+        if report_numeric:
+            box_column = st.selectbox(
+                "Numeric column for box plot",
+                report_numeric,
+                key="dl_report_box_column",
+            )
+            fig, message = build_box_plot(
+                report_df,
+                box_column,
+                f"Box plot of {box_column}",
+            )
+            if fig is not None:
+                st.plotly_chart(
+                    fig,
+                    use_container_width=True,
+                    key="dl_report_box_chart",
+                )
+                st.caption(
+                    "Points beyond the whiskers are potential outliers, "
+                    "not necessarily invalid data."
+                )
+            else:
+                st.info(message)
+        else:
+            st.info("No numeric columns are available for a box plot.")
+
+        st.divider()
+        st.markdown("#### 4. Numeric Scatter Plot")
+        if len(report_numeric) >= 2:
+            x_col, y_col = st.columns(2)
+            with x_col:
+                scatter_x = st.selectbox(
+                    "X-axis",
+                    report_numeric,
+                    key="dl_report_scatter_x",
+                )
+            with y_col:
+                scatter_y = st.selectbox(
+                    "Y-axis",
+                    [column for column in report_numeric if column != scatter_x],
+                    key="dl_report_scatter_y",
+                )
+
+            report_categorical = categorical_columns(report_df)
+            scatter_color = None
+            if report_categorical:
+                selected_color = st.selectbox(
+                    "Color by (optional)",
+                    ["None"] + report_categorical,
+                    key="dl_report_scatter_color",
+                )
+                if selected_color != "None":
+                    scatter_color = selected_color
+
+            fig, message = build_scatter_plot(
+                report_df,
+                scatter_x,
+                scatter_y,
+                f"{scatter_y} vs {scatter_x}",
+                color=scatter_color,
+            )
+            if fig is not None:
+                st.plotly_chart(
+                    fig,
+                    use_container_width=True,
+                    key="dl_report_scatter_chart",
+                )
+            else:
+                st.info(message)
+        else:
+            st.info("At least two numeric columns are required for a scatter plot.")
+
+        st.divider()
+        st.markdown("#### 5. Categorical Value Frequencies")
         report_categorical = categorical_columns(report_df)
         if report_categorical:
             selected_category = st.selectbox(
@@ -646,14 +746,18 @@ with reports_tab:
                 count_axis="Frequency",
             )
             if fig is not None:
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(
+                    fig,
+                    use_container_width=True,
+                    key="dl_report_category_chart",
+                )
             else:
                 st.info(message)
         else:
             st.info("No categorical columns are available.")
 
         st.divider()
-        st.markdown("#### 4. Frequency Distribution")
+        st.markdown("#### 6. Frequency Distribution")
         frequency_column = st.selectbox(
             "Column for frequency analysis",
             list(report_df.columns),
@@ -691,7 +795,11 @@ with reports_tab:
                 f"Frequency distribution of {frequency_column}",
             )
             if fig is not None:
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(
+                    fig,
+                    use_container_width=True,
+                    key="dl_report_frequency_chart",
+                )
             elif message:
                 st.info(message)
 
@@ -711,14 +819,18 @@ with reports_tab:
             st.info("No values are available for frequency analysis.")
 
         st.divider()
-        st.markdown("#### 5. Numeric Correlation Heatmap")
+        st.markdown("#### 7. Numeric Correlation Heatmap")
         fig, message = build_correlation_heatmap_annotated(
             report_df,
             "Correlation between numeric columns",
             report_numeric,
         )
         if fig is not None:
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(
+                fig,
+                use_container_width=True,
+                key="dl_report_correlation_chart",
+            )
             st.caption(
                 "Correlation ranges from -1 to +1. "
                 "Correlation does not necessarily imply causation."

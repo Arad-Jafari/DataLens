@@ -2,16 +2,22 @@ from __future__ import annotations
 
 from copy import deepcopy
 from html import escape
+from pathlib import Path
+import tempfile
 from typing import Any
 
 import pandas as pd
 import streamlit as st
+
+from modules.data_utils import make_upload_id
+from modules.file_loader import load_file
 
 APP_SESSION_DEFAULTS: dict[str, Any] = {
     "working_df": None,
     "original_df": None,
     "dataset_name": None,
     "processed_upload_id": None,
+    "dataset_revision": 0,
 }
 
 EXPLORER_FILTER_DEFAULTS: dict[str, Any] = {
@@ -288,12 +294,65 @@ def render_sidebar() -> None:
             label="ML Preparation",
             icon="🤖",
         )
+        st.page_link(
+            "pages/3_Data_CRUD.py",
+            label="Dataset Management",
+            icon="🗂️",
+        )
 
         st.divider()
         st.markdown(
             '<p class="sidebar-section">DATASET</p>',
             unsafe_allow_html=True,
         )
+
+        sidebar_upload = st.file_uploader(
+            "Upload CSV or Excel",
+            type=["csv", "xlsx"],
+            help="Upload a dataset directly from the sidebar on any page.",
+            key="sidebar_dataset_uploader",
+        )
+        if sidebar_upload is not None:
+            upload_bytes = sidebar_upload.getvalue()
+            upload_id = make_upload_id(sidebar_upload.name, upload_bytes)
+            if upload_id != st.session_state.get("processed_upload_id"):
+                suffix = Path(sidebar_upload.name).suffix.lower()
+                temp_path = None
+                try:
+                    with tempfile.NamedTemporaryFile(
+                        suffix=suffix,
+                        delete=False,
+                    ) as temp_file:
+                        temp_file.write(upload_bytes)
+                        temp_path = Path(temp_file.name)
+
+                    try:
+                        uploaded_df = load_file(temp_path)
+                    finally:
+                        temp_path.unlink(missing_ok=True)
+                        temp_path = None
+
+                    st.session_state["working_df"] = uploaded_df.copy(deep=True)
+                    st.session_state["original_df"] = uploaded_df.copy(deep=True)
+                    st.session_state["dataset_name"] = sidebar_upload.name
+                    st.session_state["processed_upload_id"] = upload_id
+                    st.session_state["dataset_revision"] = 0
+                    st.session_state.pop("text_file_stats", None)
+                    for key in (
+                        "ml_prep_history_key",
+                        "ml_preparation_result",
+                        "ml_preprocessing_result",
+                        "ml_split_success",
+                        "ml_split_error",
+                        "crud_dataset_key",
+                    ):
+                        st.session_state.pop(key, None)
+                    st.rerun()
+                except (OSError, ValueError, UnicodeDecodeError) as exc:
+                    st.error(f"Unable to process this file: {exc}")
+                finally:
+                    if temp_path is not None:
+                        temp_path.unlink(missing_ok=True)
 
         sidebar_df = current_dataset()
         sidebar_name = st.session_state.get("dataset_name")
@@ -322,8 +381,7 @@ def render_sidebar() -> None:
                 <div class="sidebar-dataset">
                     <div class="dataset-status">NO DATASET</div>
                     <div class="dataset-details">
-                        Upload a CSV or Excel file using the uploader
-                        on the Home page.
+                        Use the uploader above to add a CSV or Excel dataset.
                     </div>
                 </div>
                 """,

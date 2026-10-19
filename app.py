@@ -78,6 +78,7 @@ if uploaded_file is not None:
                 st.session_state.pop("text_file_stats", None)
 
             st.session_state["processed_upload_id"] = upload_id
+            st.session_state["dataset_revision"] = 0
             st.session_state.pop("ml_preparation_result", None)
             st.rerun()
 

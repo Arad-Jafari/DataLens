@@ -11,7 +11,7 @@ class ImportTests(unittest.TestCase):
             "modules.charts",
             "modules.file_loader",
             "modules.data_preparation",
-            "modules.data_prepration",
+            "modules.crud",
         ):
             importlib.import_module(name)
 
